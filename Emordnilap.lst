@@ -1,0 +1,1455 @@
+Microsoft (R) Macro Assembler Version 14.00.23026.0	    11/23/15 13:13:20
+emordnilap.asm						     Page 1 - 1
+
+
+				;// Reading a File							(ReadFile.asm)
+
+				;// Opens, reads, and displays a text file using
+				;// Procedures from Irvine32.lib.
+				INCLUDE Irvine32.inc						;// Inlcude Irvine32 library for use
+			      C ; Include file for Irvine32.lib             (Irvine32.inc)
+			      C 
+			      C ;OPTION CASEMAP:NONE		; optional: make identifiers case-sensitive
+			      C 
+			      C INCLUDE SmallWin.inc		; MS-Windows prototypes, structures, and constants
+			      C .NOLIST
+			      C .LIST
+			      C 
+			      C INCLUDE VirtualKeys.inc
+			      C ; VirtualKeys.inc
+			      C .NOLIST
+			      C .LIST
+			      C 
+			      C 
+			      C .NOLIST
+			      C .LIST
+			      C 
+				INCLUDE macros.inc							;// Include macros library for use
+			      C .NOLIST
+			      C .LIST
+			      C 
+				;// Globals
+ = 00124F80			FILE_BUFFER_SIZE = 1200000					;// Buffer for read file
+ = 0000002D			LONGEST_ENG_WORD = 45						;// Longest known english word in any major dictionary is 45 characters long
+ = 00000008			LONGEST_EMORDLAP = 8						;// 8 because longest known emordnilap is 8 (desserts/stressed) and therefore no need 
+														;// to keep searching past 8 lettered words
+ = 00000001			TRUE	 EQU  1	;// on
+ = 00000000			FALSE EQU  0	;// of
+				;//---------------------------------- DATA SEGMENT ----------------------------------------
+ 00000000			.data
+				;// Buffers
+ 00000000  00124F80 [		FileBuffer   BYTE FILE_BUFFER_SIZE DUP(0)		;// Buffer to hold entire file
+	    00
+	   ]
+ 00124F80  0000002D [		LineBuffer   BYTE LONGEST_ENG_WORD DUP(0)		;// Buffer to hold current line (1 Word/line) 
+	    00
+	   ]
+ 00124FAD  00124F80 [		ReducedBuff  BYTE LENGTHOF FileBuffer DUP(0)
+	    00
+	   ]
+ 00249F2D  00124F80 [		ReportBuffer BYTE SIZEOF ReducedBuff DUP(0)
+	    00
+	   ]
+				;// File stuff								;// therefore 1 line == 1 word)
+ 0036EEAD 52 65 70 6F 72	ReportFile BYTE "Report.txt",0				;// Name of report file
+	   74 2E 74 78 74
+	   00
+ 0036EEB8  00000050 [		FileName	 BYTE 80 DUP(0)					;// Name of File user will input to read from
+	    00
+	   ]
+ 0036EF08 00000000		FileHandle HANDLE ?							;// File handle to check if successful open/close
+
+				;// Other needed VARS
+ 0036EF0C  0000002B [		CurrentWord	BYTE SIZEOF LineBuffer - 2 DUP(0)
+	    00
+	   ]
+ 0036EF37  0000002B [		CurrentWordRev BYTE SIZEOF CurrentWord DUP(0)
+	    00
+	   ]
+
+				;// Report Header
+				;//
+				;// ReportHeader is a formatted string so that if opening successful,
+				;// write the header first thing
+ 0036EF62 54 6F 6D 61 73	ReportHeader BYTE "Tomas Ochoa"						,0dh,0ah,
+	   20 4F 63 68 6F
+	   61 0D 0A 4F 63
+	   68 6F 74 61 33
+	   39 40 53 75 6E
+	   79 2E 4F 6E 65
+	   6F 6E 74 61 2E
+	   45 64 75 0D 0A
+	   43 53 43 49 20
+	   32 33 31 3A 20
+	   41 73 73 65 6D
+	   62 6C 79 20 4C
+	   61 6E 67 75 61
+	   67 65 20 50 72
+	   6F 67 72 61 6D
+	   6D 69 6E 67 0D
+	   0A 31 32 20 4E
+	   6F 76 65 6D 62
+	   65 72 20 32 30
+	   31 35 0D 0A 50
+	   72 6F 67 72 61
+	   6D 20 35 3A 20
+	   45 6D 6F 72 64
+	   6E 69 6C 61 70
+	   73 20 61 6E 64
+	   20 46 69 6C 65
+	   20 49 2F 4F 0D
+	   0A 0D 0A 45 6D
+	   6F 72 64 6E 69
+	   6C 61 70 73 20
+	   69 6E 20 66 69
+	   6C 65 20 3A 0D
+	   0A 0D 0A
+							   "Ochota39@Suny.Oneonta.Edu"			,0dh,0ah,
+							   "CSCI 231: Assembly Language Programming" ,0dh,0ah,	
+							   "12 November 2015"					,0dh,0ah,	
+							   "Program 5: Emordnilaps and File I/O"	,0dh,0ah,
+																 0dh,0ah,
+							   "Emordnilaps in file :"				,0dh,0ah,
+																 0dh,0ah
+
+				;// ReportHeader is a formatted string so that if opening successful,
+				;// write the header first thing												 0dh,0ah				
+
+ 0036F005 00000000		CharCount	   DWORD 0		;// a count to check how long a word is 
+ 0036F009 00000000		WordCount	   DWORD 0		;// a count to check how many words in buffer
+ 0036F00D 00000000		ReturnCode   DWORD 0
+ 0036F011 00000000		BytesWritten DWORD 0
+
+ 0036F015 00000000		EndOfFile		 DWORD ?
+ 0036F019 00000000		StartOfFile	 DWORD ?
+ 0036F01D 00000000		LastWordAddress DWORD ?
+
+ 0036F021 00000000		CurrentESILocation DWORD ?
+ 0036F025 00000000		CurrentEDILocation DWORD ?
+ 0036F029 00000000		saveLoc DWORD ?
+ 0036F02D  0000002F [		TempLine BYTE LONGEST_ENG_WORD + 2 DUP (0) 
+	    00
+	   ]
+ 0036F05C  0000002D [		TempWord BYTE LONGEST_ENG_WORD DUP (0)
+	    00
+	   ]
+				;//---------------------------------- CODE SEGMENT ----------------------------------------
+ 00000000			.code
+				;// ---- Prototypes ----
+				Get_Line	PROTO,
+					fileBuff:PTR BYTE,
+					lineBuff:PTR BYTE  
+
+				Word_In_Line PROTO, 
+					lineBuff:PTR BYTE,
+					stringVar:PTR BYTE
+
+				Reverse_Word  PROTO,
+					CurWord:PTR BYTE,
+					RevWord:PTR BYTE 
+
+				Search_Buffer PROTO,
+					SearchThis:PTR BYTE,
+					SearchFrom:PTR BYTE
+
+				Amount_of_Words PROTO,
+					SearchFileBuffer:PTR BYTE
+
+				Copy_Word_DogAlpha PROTO, 
+					WordToCopy: PTR BYTE,
+					SaveWordIn: PTR BYTE
+
+				Copy_Word_DogAlpha_Six PROTO, 
+					WordToCopy2: PTR BYTE,
+					SaveWordIn2: PTR BYTE
+
+				;// ---- Main ---- 
+ 00000000			main PROC
+
+				;// Prompt user for name of file to read from
+					mWrite  "Enter file name: "				
+ 0036F089		     1		.data		
+ 0036F089 45 6E 74 65 72     1		??0000 BYTE "Enter file name: ",0	
+	   20 66 69 6C 65
+	   20 6E 61 6D 65
+	   3A 20 00
+ 00000000		     1		.code
+ 00000000  52		     1		push	edx
+ 00000001  BA 0036F089 R     1		mov	edx,OFFSET ??0000
+ 00000006  E8 00000000 E     1		call	WriteString
+ 0000000B  5A		     1		pop	edx
+					mReadString  FileName 
+ 0000000C  51		     1		push ecx
+ 0000000D  52		     1		push edx
+ 0000000E  BA 0036EEB8 R     1		mov  edx,OFFSET FileName
+ 00000013  B9 00000050	     1		mov  ecx,SIZEOF FileName
+ 00000018  E8 00000000 E     1		call ReadString
+ 0000001D  5A		     1		pop  edx
+ 0000001E  59		     1		pop  ecx
+					
+				;// Open File for reading
+ 0000001F  BA 0036EEB8 R		mov	edx, OFFSET FileName 
+ 00000024  E8 00000000 E		call OpenInputFile 
+ 00000029  A3 0036EF08 R		mov  FileHandle, eax 
+					
+				 ;// Check if opening was successful
+ 0000002E  83 F8 FF			cmp  eax, INVALID_HANDLE_VALUE 
+ 00000031  75 11			jne  Open_OK
+					mWrite <"Error Opening File...",0dh,0ah>
+ 0036F09B		     1		.data		
+ 0036F09B 45 72 72 6F 72     1		??0001 BYTE "Error Opening File...",0dh,0ah,0	
+	   20 4F 70 65 6E
+	   69 6E 67 20 46
+	   69 6C 65 2E 2E
+	   2E 0D 0A 00
+ 00000033		     1		.code
+ 00000033  52		     1		push	edx
+ 00000034  BA 0036F09B R     1		mov	edx,OFFSET ??0001
+ 00000039  E8 00000000 E     1		call	WriteString
+ 0000003E  5A		     1		pop	edx
+ 0000003F  E9 000002F8			jmp  Quit 
+					
+ 00000044			Open_OK: 
+				;// Read File to buffer 
+ 00000044  BA 00000000 R		mov  edx, OFFSET FileBuffer 					;// points to buffer
+ 00000049  B9 00124F80			mov	ecx, FILE_BUFFER_SIZE					;// max bytes to read 
+ 0000004E  E8 00000000 E		call ReadFromFile							;// read the file 
+ 00000053  73 1B			jnc	Check_Buff_Size						;// If carry buff too small 
+					mWrite "Error reading file..."				;// If it didnt jump then error 
+ 0036F0B3		     1		.data		
+ 0036F0B3 45 72 72 6F 72     1		??0002 BYTE "Error reading file...",0	
+	   20 72 65 61 64
+	   69 6E 67 20 66
+	   69 6C 65 2E 2E
+	   2E 00
+ 00000055		     1		.code
+ 00000055  52		     1		push	edx
+ 00000056  BA 0036F0B3 R     1		mov	edx,OFFSET ??0002
+ 0000005B  E8 00000000 E     1		call	WriteString
+ 00000060  5A		     1		pop	edx
+ 00000061  A1 0036EF08 R		mov	eax, FileHandle 
+ 00000066  E8 00000000 E		call CloseFile 
+ 0000006B  E9 000002CC			jmp	Quit 
+
+ 00000070			Check_Buff_Size:
+ 00000070  3D 00124F80			cmp  eax, FILE_BUFFER_SIZE					;// buffer large enough?
+ 00000075  72 11			jb	Buff_Size_OK 
+					mWrite <"Error: Buffer to small for the file...",0dh,0ah>
+ 0036F0C9		     1		.data		
+ 0036F0C9 45 72 72 6F 72     1		??0003 BYTE "Error: Buffer to small for the file...",0dh,0ah,0	
+	   3A 20 42 75 66
+	   66 65 72 20 74
+	   6F 20 73 6D 61
+	   6C 6C 20 66 6F
+	   72 20 74 68 65
+	   20 66 69 6C 65
+	   2E 2E 2E 0D 0A
+	   00
+ 00000077		     1		.code
+ 00000077  52		     1		push	edx
+ 00000078  BA 0036F0C9 R     1		mov	edx,OFFSET ??0003
+ 0000007D  E8 00000000 E     1		call	WriteString
+ 00000082  5A		     1		pop	edx
+ 00000083  E9 000002B4			jmp  Quit 
+
+ 00000088			Buff_Size_OK:
+					mWrite "File size: "
+ 0036F0F2		     1		.data		
+ 0036F0F2 46 69 6C 65 20     1		??0004 BYTE "File size: ",0	
+	   73 69 7A 65 3A
+	   20 00
+ 00000088		     1		.code
+ 00000088  52		     1		push	edx
+ 00000089  BA 0036F0F2 R     1		mov	edx,OFFSET ??0004
+ 0000008E  E8 00000000 E     1		call	WriteString
+ 00000093  5A		     1		pop	edx
+ 00000094  E8 00000000 E		call WriteDec								;// Display file size
+ 00000099  E8 00000000 E		call Crlf 
+ 0000009E  E8 00000000 E		call Crlf 
+
+				;// Close reading file 
+ 000000A3  A1 0036EF08 R		mov	eax, FileHandle
+ 000000A8  E8 00000000 E		call CloseFile 
+
+				;//----------------------------------------------------------------------------------------
+				;// BEGIN REDUCE BUFFER
+				;// 
+				;// FACTS: 
+				;//	- The longest emordnilap known is 8 letters long
+				;// 	- This means that any word longer than 8 Do not qualify
+				;//  - If they dont quailify, that means we can remove it from the buffer 
+				;//	- To do this, let us read each word from the buffer and check if its > 8
+				;//  - If so copy go to next word
+				;//  - If not copy it to reduced buffer 
+
+				;// First find how many words are there in the FileBuffer 
+					INVOKE Amount_of_Words, ADDR FileBuffer		;// Will return amount in ebx 
+ 000000B7  89 1D 0036F009 R			mov	WordCount, ebx 				;// and address od EOF in edx	 
+ 000000BD  A3 0036F019 R			mov	StartOfFile,eax	
+ 000000C2  89 15 0036F015 R			mov	EndOfFile, edx 
+
+				;// Initialize the reduced buffer
+ 000000C8  BE 00000000 R		mov	esi, OFFSET FileBuffer				;// esi => FileBuffer 
+ 000000CD  BF 00124FAD R		mov	edi, OFFSET ReducedBuff				;// edi => ReducedBuff
+ 000000D2  89 35 0036F021 R		mov  CurrentESILocation, esi				;// save address to currentESIlocation 
+ 000000D8  89 3D 0036F025 R		mov	CurrentEDILocation, edi				;// save address to currentEDIlocation 
+						
+				;// Set Outer Loop for the FileBuffer 
+ 000000DE  8B 0D 0036F009 R		mov	ecx, WordCount				;// count
+
+ 000000E4			Outer_Loop_1: 		
+				;// First get the current line in buffer and store that line to 'LineBuffer'
+					INVOKE Get_Line, CurrentESILocation, ADDR LineBuffer 				
+
+				;// Excract the word from the buffer and store it in variable 'CurrentWord'
+					INVOKE Word_In_Line, ADDR LineBuffer, ADDR CurrentWord 
+
+				;// Get the length of the current word (in eax)
+					INVOKE Str_Length, ADDR CurrentWord 
+ 0000010D  A3 0036F005 R			mov	CharCount, eax 
+
+				;// Check if CharCount > 8
+ 00000112  83 3D 0036F005 R		cmp	CharCount, 8
+	   08
+ 00000119  77 39			ja	Above_Eight
+ 0000011B  EB 00			jmp	EqualLess_Eight 	
+					
+ 0000011D				EqualLess_Eight: ;// if < 8
+					;// Copy word to buffer
+					;// MAKE OWN STR COPY TO ADD 0d0a
+						INVOKE Copy_Word_DogAlpha, ADDR CurrentWord, CurrentEDILocation 	;// Store word in reduced buff 
+ 0000012D  03 3D 0036F005 R			add	edi, CharCount			;// edi => last letter
+ 00000133  83 C7 02				add 	edi, 2				;// edi => first letter of next (skipt '\r' & '\n')
+ 00000136  89 3D 0036F025 R			mov	CurrentEDILocation, edi 	;// save current location
+						;// Get the CurrentESILocation correct
+ 0000013C  03 35 0036F005 R			add 	esi, CharCount			;// esi => last letter
+ 00000142  83 C6 02				add 	esi, 2				;// esi => first letter of next (skipt '\r' & '\n')
+ 00000145  89 35 0036F021 R			mov	CurrentESILocation, esi	;// save current location
+ 0000014B  49					dec	ecx 
+ 0000014C  8A 06				mov	al, [esi]
+ 0000014E  3C 00				cmp  al, 0
+ 00000150  74 1E				je	pause_it
+ 00000152  75 90				jne	Outer_Loop_1			;// loop	
+ 00000154				Above_Eight:	;// If > 8 
+					;// Skip word (move esi to next word)
+ 00000154  03 35 0036F005 R			add 	esi, CharCount			;// esi => last letter
+ 0000015A  83 C6 02				add 	esi, 2				;// esi => first letter of next (skipt '\r' & '\n')
+ 0000015D  89 35 0036F021 R			mov	CurrentESILocation, esi	;// save current location
+ 00000163  49					dec	ecx 
+ 00000164  8A 06				mov	al, [esi]
+ 00000166  3C 00				cmp  al, 0
+ 00000168  74 06				je	pause_it
+ 0000016A  0F 85 FFFFFF74			jne	Outer_Loop_1			;// loop
+
+				;// END OF BUFFER REDUCTION
+				;//----------------------------------------------------------------------------------------
+				;// BEGIN CHECKING FOR EMORDNILAPS 
+				;//
+				;// NOTES: 
+				;//		- I have a reduced file buffer with all the words == || < 8
+				;//		- To check for emordnilaps
+				;//			- Get the line in the buffer 
+				;//			- Get the word from that line
+				;//			- Copy and reverse that word 
+				;//			- Use that reversed copy and search for it in the reduced buffer
+				;//				- If word found 
+				;//					- It is an emordnilap
+				;//					- Write it to a report buffer 
+				;//					- go to next word 
+				;//				- If word not found
+				;//					- It is not an emordnilap
+				;//					- Do nothing (in terms of report buffer)
+				;//					- go to next word 
+				;//			-Repeat 
+ 00000170			pause_it:
+				;// First get amount of word from Reduced Buffer 
+					INVOKE Amount_of_Words, ADDR ReducedBuff	;// Will return amount in ebx 
+ 0000017A  89 1D 0036F009 R			mov	WordCount, ebx 				;// and address od EOF in edx	 
+ 00000180  A3 0036F019 R			mov	StartOfFile,eax	
+ 00000185  89 15 0036F015 R			mov	EndOfFile, edx 
+
+				;// Initialize esi and edi 
+ 0000018B  BE 00124FAD R		mov	esi, OFFSET ReducedBuff				;// esi => ReducedBuff 
+ 00000190  BF 00249F2D R		mov	edi, OFFSET ReportBuffer				;// edi => ReportBuff
+
+				;// Save the initial locations of esi and edi and set the loop counter
+ 00000195  89 35 0036F021 R		mov  CurrentESILocation, esi				;// save address to currentESIlocation 
+ 0000019B  89 3D 0036F025 R		mov	CurrentEDILocation, edi				;// save address to currentEDIlocation 
+ 000001A1  8B 0D 0036F009 R		mov	ecx, WordCount						;// count
+
+				;// Check for emordnilaps and if one is found, write it to a seperate buffer for the report file
+ 000001A7			Emordnilap_Loop:
+					;// Get line in reduced buffer 
+						INVOKE Get_Line, CurrentESILocation, ADDR LineBuffer 		
+						
+					;// Get Word from the reduced buffer 
+						INVOKE Word_In_Line, ADDR LineBuffer, OFFSET CurrentWord 
+						
+					;// Reverse the word 
+						INVOKE Reverse_Word, ADDR CurrentWord, ADDR CurrentWordRev 
+						
+					;// Search the reversed word inside the reduced buffer 
+						INVOKE Search_Buffer, ADDR CurrentWordRev, ADDR ReducedBuff 
+ 000001E4  A3 0036F00D R				mov	ReturnCode, eax				;// If found, eax == 0001, else eax == 0000
+					
+					;// Check Return code to see if found or not 
+						.IF (ReturnCode == TRUE)
+
+						;// Copy the word to the report buffer
+							INVOKE Copy_Word_DogAlpha_Six, ADDR CurrentWord, CurrentEDILocation 	;// Store word in reduced buff 
+
+						;// Get the length of the Current word 
+							INVOKE Str_Length, ADDR CurrentWord		;// save char count from eax 
+ 0000020C  A3 0036F005 R					mov	CharCount, eax 
+
+						;// Get the CurrentEDILocation correct 
+ 00000211  03 3D 0036F005 R				add	edi, CharCount			;// edi => last letter
+ 00000217  83 C7 02					add 	edi, 2				;// edi => first letter of next (skipt '\r' & '\n')
+ 0000021A  89 3D 0036F025 R				mov	CurrentEDILocation, edi 	;// save current location
+
+						;// Get the CurrentESILocation correct
+ 00000220  03 35 0036F005 R				add 	esi, CharCount			;// esi => last letter
+ 00000226  83 C6 02					add 	esi, 2				;// esi => first letter of next (skipt '\r' & '\n')
+ 00000229  89 35 0036F021 R				mov	CurrentESILocation, esi	;// save current location
+
+						;// loop up (loop only does -128 to +128 so out of range if use menmonic loop)
+ 0000022F  49						dec	ecx 
+ 00000230  0F 85 FFFFFF71				jne	Emordnilap_Loop
+
+						.ELSE
+						;// Dont Write to report buffer 
+							INVOKE Str_Length, ADDR CurrentWord		;// save char count from eax 
+ 00000242  A3 0036F005 R					mov	CharCount, eax 
+
+						;// Get the CurrentESI location correct
+ 00000247  03 35 0036F005 R				add 	esi, CharCount			;// esi => last letter
+ 0000024D  83 C6 02					add 	esi, 2				;// esi => first letter of next (skipt '\r' & '\n')
+ 00000250  89 35 0036F021 R				mov	CurrentESILocation, esi	;// save current location
+
+						;// Get the right edi location
+ 00000256  8B 3D 0036F025 R				mov	edi, CurrentEDILocation  
+
+						;// loop up (loop only does -128 to +128 so out of range if use menmonic loop)
+ 0000025C  49						dec	ecx 
+ 0000025D  0F 85 FFFFFF44				jne	Emordnilap_Loop
+						.ENDIF
+
+				;// STOP CHECKING FOR EMORDNILAPS 
+				;//----------------------------------------------------------------------------------------
+				;// BEGIN WRITE TO FILE 
+
+				;// Create new File for writing to
+ 00000263  BA 0036EEAD R		mov	edx, OFFSET ReportFile 
+ 00000268  E8 00000000 E		call	CreateOutputFile 
+ 0000026D  A3 0036EF08 R		mov	FileHandle, eax 
+					
+				;// Check for errors
+ 00000272  83 F8 FF			cmp	eax, INVALID_HANDLE_VALUE 				;// Error oppening?
+ 00000275  75 1B			jne	Create_OK								;// If not, skip
+					mWrite <"Error creating file...",0dh,0ah>
+ 0036F0FE		     1		.data		
+ 0036F0FE 45 72 72 6F 72     1		??0005 BYTE "Error creating file...",0dh,0ah,0	
+	   20 63 72 65 61
+	   74 69 6E 67 20
+	   66 69 6C 65 2E
+	   2E 2E 0D 0A 00
+ 00000277		     1		.code
+ 00000277  52		     1		push	edx
+ 00000278  BA 0036F0FE R     1		mov	edx,OFFSET ??0005
+ 0000027D  E8 00000000 E     1		call	WriteString
+ 00000282  5A		     1		pop	edx
+ 00000283  A1 0036EF08 R		mov	eax, FileHandle 						;// else continue to close and exit
+ 00000288  E8 00000000 E		call CloseFile 
+ 0000028D  E9 000000AA			jmp	Quit 
+
+ 00000292			Create_OK:
+				;// Write the header first 
+ 00000292  A1 0036EF08 R		mov	eax, FileHandle 
+ 00000297  BA 0036EF62 R		mov	edx, OFFSET ReportHeader  
+ 0000029C  B9 000000A3			mov	ecx, LENGTHOF ReportHeader 
+ 000002A1  E8 00000000 E		call WriteToFile 
+ 000002A6  A3 0036F011 R		mov	BytesWritten, eax						;// Save characters written
+					
+				;// Modify the report buffer to show 6 words per line 
+ 000002AB  BE 00249F2D R		mov	esi, OFFSET ReportBuffer 
+ 000002B0  B9 00124F80			mov  ecx, LENGTHOF ReportBuffer		;// use as outer loop counter 
+ 000002B5  BA 00000000			mov	edx, 0						;// use edx as inner loop counter 
+
+ 000002BA			starter:
+ 000002BA  8A 06			mov	al, [esi]
+ 000002BC  3C 2C			cmp	al, 2ch		;// is al = ','? 
+ 000002BE  74 07			je	count_six 	;// yes, go to count six
+ 000002C0  46				inc	esi			;// go to next character 
+ 000002C1  3C 00			cmp  al, 0
+ 000002C3  74 28			je  end_buff 
+ 000002C5  E2 F3			LOOP starter		;// loop 
+					
+				;// count every six words 
+ 000002C7				count_six:		
+ 000002C7  83 C2 01				add  edx, 1	;// word in line 
+ 000002CA  46					inc	esi 		;// esi = 'space'
+ 000002CB  46					inc	esi		;// esi = '[next char]'
+ 000002CC  83 E9 02				sub  ecx, 2	;// manually skipped 2, compensate loop	
+ 000002CF  83 FA 06				cmp	edx, 6	;// counted 6 words?
+ 000002D2  74 02				je	Add_CRLF	;// yes, go to add a nl 	
+ 000002D4  E2 E4			LOOP starter		;// loop
+
+				;// replace the ',' and '[space]' with '\r' and '\n'
+ 000002D6				Add_CRLF:
+					;// go back to the space (compensate loop counter)	
+ 000002D6  4E					dec esi		
+ 000002D7  83 C1 01				add ecx, 1			
+					;// replace the '[space]' with '\n'
+ 000002DA  B3 0A				mov bl, 0ah 
+ 000002DC  88 1E				mov [esi], bl 
+					;// go back to the comma (compensate loop counter)		
+ 000002DE  4E					dec esi
+ 000002DF  83 C1 01				add ecx, 1	 
+					;// replace the ',' with '\r'
+ 000002E2  B3 0D				mov bl, 0dh 
+ 000002E4  88 1E				mov [esi], bl 
+ 000002E6  BA 00000000				mov	edx, 0		;// reset inner counter 
+ 000002EB  E2 CD			LOOP starter 
+
+				;// end of buffer 
+ 000002ED			end_buff:	
+
+				;// Get how many ACTUAL ascii characters there are in the report buffer
+					INVOKE Str_length, ADDR ReportBuffer 
+ 000002F7  01 05 0036F011 R			add BytesWritten, eax 
+
+				;// Now Write the emordnilaps to the report buffer 
+ 000002FD  A1 0036EF08 R		mov	eax, FileHandle 
+ 00000302  BA 00249F2D R		mov	edx, OFFSET ReportBuffer 
+ 00000307  8B 0D 0036F011 R		mov	ecx, BytesWritten  
+ 0000030D  E8 00000000 E		call	WriteToFile 
+
+				;// Show the user how many bytes were written
+ 00000312  A3 0036F011 R		mov  BytesWritten, eax 
+					mWrite "Bytes written to file: "
+ 0036F117		     1		.data		
+ 0036F117 42 79 74 65 73     1		??0006 BYTE "Bytes written to file: ",0	
+	   20 77 72 69 74
+	   74 65 6E 20 74
+	   6F 20 66 69 6C
+	   65 3A 20 00
+ 00000317		     1		.code
+ 00000317  52		     1		push	edx
+ 00000318  BA 0036F117 R     1		mov	edx,OFFSET ??0006
+ 0000031D  E8 00000000 E     1		call	WriteString
+ 00000322  5A		     1		pop	edx
+ 00000323  A1 0036F011 R		mov	eax, BytesWritten
+ 00000328  E8 00000000 E		call WriteDec 
+ 0000032D  E8 00000000 E		call Crlf 
+
+				;// Close the file for writing 
+ 00000332  A1 0036EF08 R		mov	eax, FileHandle 
+ 00000337  E8 00000000 E		call	CloseFile 
+
+				;// STOP WRITING TO FILE
+				;//----------------------------------------------------------------------------------------
+				;// Quit 
+ 0000033C			Quit:
+					mWrite <"Goodbye!",0dh,0ah>
+ 0036F12F		     1		.data		
+ 0036F12F 47 6F 6F 64 62     1		??0007 BYTE "Goodbye!",0dh,0ah,0	
+	   79 65 21 0D 0A
+	   00
+ 0000033C		     1		.code
+ 0000033C  52		     1		push	edx
+ 0000033D  BA 0036F12F R     1		mov	edx,OFFSET ??0007
+ 00000342  E8 00000000 E     1		call	WriteString
+ 00000347  5A		     1		pop	edx
+ 00000348  E8 00000000 E		call Crlf 
+					exit 
+ 00000354			main ENDP
+				;//-------------------------------------------- CUSTOM PROCEDURES ------------------------------------
+				;// Name:	  Amount_of_Words
+				;//
+				;// Purpose:  Purpose of this procedure is to check how many words there are in the buffer 
+				;// 
+				;// Recieves: SearchFileBuffe, The address of a buffer 
+				;//		    WrdAmnt, the variable where to store the count 		     
+				;//		    
+				;// Returns:  A count of how many words
+				;//----------------------------------------------------------------------------------------------
+ 00000354			Amount_of_Words PROC USES esi edi ecx,
+					SearchFileBuffer:PTR BYTE
+					
+ 0000035A  8B 75 08			mov	esi, SearchFileBuffer 
+ 0000035D  B9 00124F80			mov	ecx, FILE_BUFFER_SIZE 
+ 00000362  BB 00000000			mov	ebx, 0
+					
+					;// Count how many words there are 
+ 00000367			Start_one:
+ 00000367  8A 06			mov	al, [esi]
+ 00000369  3C 00			cmp	al, 0
+ 0000036B  74 18			je	Is_Null 
+ 0000036D  3C 0D			cmp	al, 0dh 
+ 0000036F  74 02			je	Is_CR
+ 00000371  75 0F			jne	Is_Char 
+ 00000373			Is_CR:
+ 00000373  46				inc	esi 
+ 00000374  8A 06			mov	al, [esi]
+ 00000376  3C 0A			cmp	al, 0ah 
+ 00000378  74 02			je	Is_LF 
+ 0000037A  75 06			jne	Is_Char 
+ 0000037C			Is_LF: 
+ 0000037C  83 C3 01			add	ebx, 1 
+ 0000037F  46				inc	esi 
+ 00000380  E2 E5			LOOP	Start_one 	
+ 00000382			Is_Char:
+ 00000382  46				inc	esi 
+ 00000383  E2 E2			LOOP Start_one 
+ 00000385			Is_Null:
+ 00000385  8B D6			mov	edx, esi 
+ 00000387  8B 7D 08			mov	edi, SearchFileBuffer 
+ 0000038A  8B C7			mov	eax, edi 
+					ret 
+ 00000393			Amount_of_Words ENDP 
+				;//----------------------------------------------------------------------------------------------
+				;// Name:    Copy_Word_DogAlpha
+				;//
+				;// Purpose: This procedure is simply a redefinition of Irvine's Str_copy. I need my proc to add
+				;//		  a 0d0a at the end of string instead of 0000. This helps me during reduction, because
+				;//		  allthough in memory it looks ok, the 00 00s between words makes the program think the 
+				;//		  eof is there when in reality it should be a new line 
+				;//
+				;// Recives: WordToCopy, the address of word
+				;//		   SaveWordIn, address of where to save	
+				;//----------------------------------------------------------------------------------------------
+ 00000393			Copy_Word_DogAlpha PROC USES eax ecx esi edi, 
+					WordToCopy:PTR BYTE,
+					SaveWordIn:PTR BYTE 
+					
+				;// Get character count of word to copy and store it in ecx (count)
+					INVOKE Str_Length, WordToCopy 
+ 000003A2  8B C8			mov	ecx, eax 
+
+				;// Load stings and copy
+ 000003A4  8B 75 08			mov	esi, WordToCopy		;// sournce
+ 000003A7  8B 7D 0C			mov	edi, SaveWordIn		;// target 
+ 000003AA  FC				cld						;// Direction = forward 
+ 000003AB  F3/ A4			rep	movsb				;// copy string 
+
+				;// After the run, edi = element after last letter so add a '\r' and '\n'
+ 000003AD  B0 0D			mov	al, 0dh 
+ 000003AF  88 07			mov  [edi], al 
+ 000003B1  47				inc  edi 
+ 000003B2  B0 0A			mov	al, 0ah
+ 000003B4  88 07			mov	[edi], al 
+				;// Return to program call
+					ret 
+ 000003BE			Copy_Word_DogAlpha ENDP
+				;//----------------------------------------------------------------------------------------------
+				;// Name:    Copy_Word_DogAlpha_Six
+				;//
+				;// Purpose: This procedure is simply a redefinition of Irvine's Str_copy. I need my proc to add
+				;//		  a 0d0a at the end of string instead of 0000. This helps me during reduction, because
+				;//		  allthough in memory it looks ok, the 00 00s between words makes the program think the 
+				;//		  eof is there when in reality it should be a new line 
+				;//
+				;// Recives: WordToCopy, the address of word
+				;//		   SaveWordIn, address of where to save	
+				;//----------------------------------------------------------------------------------------------
+ 000003BE			Copy_Word_DogAlpha_Six PROC USES eax ecx esi edi, 
+					WordToCopy2:PTR BYTE,
+					SaveWordIn2:PTR BYTE 
+					
+				;// Get character count of word to copy and store it in ecx (count)
+					INVOKE Str_Length, WordToCopy2 
+ 000003CD  8B C8			mov	ecx, eax 
+
+				;// Load stings and copy
+ 000003CF  8B 75 08			mov	esi, WordToCopy2		;// sournce
+ 000003D2  8B 7D 0C			mov	edi, SaveWordIn2		;// target 
+ 000003D5  FC				cld						;// Direction = forward 
+ 000003D6  F3/ A4			rep	movsb				;// copy string 
+
+				;// After the run, edi = element after last letter so add a '\r' and '\n'
+ 000003D8  B0 2C			mov	al, 2ch 
+ 000003DA  88 07			mov  [edi], al 
+ 000003DC  47				inc  edi 
+ 000003DD  B0 20			mov	al, 20h
+ 000003DF  88 07			mov	[edi], al 
+				;// Return to program call
+					ret 
+ 000003E9			Copy_Word_DogAlpha_Six ENDP
+				;//----------------------------------------------------------------------------------------------
+				;// Name:    Get_Last_Word_ADDR
+				;//
+				;// Purpose: Gets the address of the last word of the file 
+				;//
+				;// Recives: EOFBuff, the address of the file null terminator of a buffer 
+				;//
+				;// Returns: edx, Reurns the address of the last word in the file 
+				;//----------------------------------------------------------------------------------------------
+ 000003E9			Get_Last_Word_ADDR PROC,
+					EOFBuff:PTR BYTE 
+					
+ 000003EC  8B 7D 08			mov edi, EOFBuff 
+ 000003EF  BB 00000000			mov	ebx, 0
+ 000003F4  4F				dec	edi 			;// edi => '\n' 
+ 000003F5  4F				dec	edi 			;// edi => '\r'
+ 000003F6			gutter:
+ 000003F6  4F				dec	edi				;// edi => ['last letter of file']
+ 000003F7  8A 07			mov	al, [edi]		;// check if its a new line
+					.IF(al != 0ah) 		;// if edi == ['\n']
+ 000003FD  83 C3 01				add	ebx, 1		;// we've reached the end of a new word 
+ 00000400  EB F4				jmp gutter 
+					.ELSE
+					;// mark address of last word in buffer 
+ 00000404  47					inc	edi 		;// MEM: '\r','\n','[first char of word]' 
+ 00000405  8B D7				mov	edx, edi 	;//   move edi  ^    to        ^            
+ 00000407  EB 00				jmp	ender 
+					.ENDIF
+ 00000409			ender:
+					ret 
+ 0000040D			Get_Last_Word_ADDR ENDP 
+				;//--------------------------------------------PROCEDURES----------------------------------------
+				;// Name:	 Get_Line 
+				;//
+				;// Purpose: Saves the current line at from any buffer to a dedicated line buffer 
+				;// 
+				;// Recieves: EDI, The address of the fileBuffer from where to search, and the address
+				;//		    of lineBuffer to store the current line 
+				;//----------------------------------------------------------------------------------------------
+ 0000040D			Get_Line	PROC USES eax ebx ecx esi edi,
+					fileBuff:PTR BYTE,				;// FileBuffer
+					lineBuff:PTR BYTE				;// LineBuffer
+					
+ 00000415  8B 75 08			mov	esi, fileBuff 
+ 00000418  8B 7D 0C			mov	edi, lineBuff
+ 0000041B  B9 0000002F			mov	ecx, LONGEST_ENG_WORD + 2	;// Since each line has 1word/line and longest
+												;// english word in any major ditionary is 45 (+ 2 for 
+												;// 'CR' and 'LF'), no need to search for a word longer than that
+					;// Begin to load the line
+ 00000420			Get_Line_Start:
+ 00000420  8A 06			mov	al, [esi]		;// al = [contents of esi]
+ 00000422  3C 00			cmp	al, 0		;// Compare al with 0
+ 00000424  74 18			je	Is_NULL		;// jump to label "Is_NULL" if al == 0
+
+ 00000426			Check_CR:
+ 00000426  8A 06			mov	al, [esi]
+ 00000428  3C 0D			cmp	al, 0dh		;// Compare al with '\r'
+ 0000042A  75 02			jne  Copy_Element 
+ 0000042C  74 06			je	Is_New_Line	;// jump to label "Is_New_Line" if al == '\r'
+					
+
+ 0000042E			Copy_Element:
+ 0000042E  88 07			mov	[edi], al
+ 00000430  46				inc	esi 
+ 00000431  47				inc	edi 
+ 00000432  E2 F2			LOOP	Check_CR 
+					
+ 00000434			Is_New_Line:			;// Current line is a new line 
+					;// add a '\r'
+ 00000434  B3 0D			mov	bl, 0dh
+ 00000436  88 1F			mov	[edi], bl 
+ 00000438  47				inc	edi 
+					;// add a '\n'
+ 00000439  B3 0A			mov	bl, 0ah
+ 0000043B  88 1F			mov	[edi], bl 
+ 0000043D  47				inc	edi 
+
+ 0000043E			Is_NULL:				;// Current line is null term 
+ 0000043E  B3 00			mov	bl, 0
+ 00000440  88 1F			mov	[edi], bl 
+ 00000442  EB 00			jmp here_1
+
+ 00000444			here_1:	
+					ret	
+ 0000044D			Get_Line	ENDP 
+				;//----------------------------------------------------------------------------------------------
+				;// Name:    Reverse_Word 
+				;//
+				;// Purpose: Reverses any string passed into the procedure
+				;//
+				;// Recives: CurWord, the address of the word to reverse 
+				;// 		   RevWord, the address of the variable to store it in
+				;//----------------------------------------------------------------------------------------------
+ 0000044D			Reverse_Word PROC USES eax ecx esi edi,
+					CurWord: PTR BYTE,
+					RevWord: PTR BYTE 
+
+				;// Get length of current word 
+					INVOKE Str_Length, CurWord	;// String length is in eax 
+
+				;// Load Strings and set count 
+ 0000045C  8B 75 08			mov	esi, CurWord 			;// Source string 
+ 0000045F  8B 7D 0C			mov	edi, RevWord			;// EDI => RevWord 
+ 00000462  8B C8			mov	ecx, eax				;// count = StrLength 
+
+				;// Get esi to point to last element
+ 00000464  03 F0			add	esi,	eax				;// Add esi address by string length (esi => null )
+ 00000466  4E				dec	esi					;// esi now => last character
+					
+				;// Begin copying elements in reverse
+ 00000467			Reverse_Loop:				
+ 00000467  8A 06			mov	al, [esi]
+ 00000469  88 07			mov	[edi], al
+ 0000046B  4E				dec	esi 
+ 0000046C  47				inc	edi 
+ 0000046D  E2 F8			LOOP Reverse_Loop 
+
+					;// WHen program gets to here, RevWord will be reversed but is not null terminated so do so
+ 0000046F  B0 00			mov	al, 0
+ 00000471  88 07			mov	[edi], al 
+
+					;// Exit proc and return to program call
+					ret
+ 0000047B			Reverse_Word ENDP
+				;//----------------------------------------------------------------------------------------------
+				;// Name:    Search_Buffer 
+				;//
+				;// Purpose: To search for a word in a buffer 
+				;//
+				;// Recives: esi edi, take in the file buffer and the word to look for in the file buffer 
+				;//
+				;// Returns: eax, a bool variable that says wether or not found 
+				;//----------------------------------------------------------------------------------------------
+ 0000047B			Search_Buffer	PROC USES ebx ecx edx esi edi,
+					SearchThis:PTR BYTE,
+					SearchFrom:PTR BYTE	
+
+				;// First get the amount of words in the buffer passed in and set return val as count
+					INVOKE Amount_Of_Words, SearchFrom 	
+ 0000048B  8B CB				mov	ecx, ebx 
+ 0000048D			SBL1:
+				;// Get the current line of the buffer passed in
+					INVOKE Get_Line, SearchFrom, ADDR TempLine
+						
+				;// Get the word from the current buffer 
+					INVOKE Word_In_Line, ADDR TempLine, ADDR TempWord
+					
+				;// Compare the word in line with the word passed in 
+					INVOKE Str_compare, ADDR TempWord, SearchThis 
+ 000004B6  74 02			je found
+ 000004B8  75 0E			jne not_found
+ 000004BA			found:
+ 000004BA  B8 00000001			mov	eax, 0001
+					ret 
+ 000004C8			not_found:
+				;// Move esi to next word
+ 000004C8  8B 75 0C			mov	esi, SearchFrom 
+					INVOKE Str_length, ADDR TempLine 
+ 000004D5  03 F0			add esi, eax 
+ 000004D7  B8 00000000			mov eax, 0000
+ 000004DC  89 75 0C			mov	SearchFrom, esi 
+ 000004DF  E2 AC			LOOP SBL1 
+					ret
+ 000004EA			Search_Buffer	ENDP 
+				;//----------------------------------------------------------------------------------------------
+				;// Name:    Set_ADDR_Word
+				;//
+				;// Purpose: Takes in 2 addresses, the first it an address of the begining of a word.
+				;// 		 The second is the address of a variable to store in 
+				;//
+				;// Recives: begginingADDR, the address of the first letter of a string
+				;//			 StringVar3,	the variable where to store 
+				;// Returns: 
+				;//----------------------------------------------------------------------------------------------
+ 000004EA			Set_ADDR_Word PROC,
+					begginingADDR:PTR BYTE,
+					StringVar3:PTR BYTE,
+					StringVar3Length:DWORD
+					
+ 000004ED  8B 75 08			mov	esi, begginingADDR 
+ 000004F0  8B 7D 0C			mov	edi, StringVar3
+ 000004F3  8B 4D 10			mov	ecx, StringVar3Length 
+					
+ 000004F6			loop_er:
+ 000004F6  8A 06				mov	al, [esi]
+ 000004F8  88 07				mov	[edi], al 
+ 000004FA  46					inc	esi 
+ 000004FB  47					inc	edi 
+ 000004FC  E2 F8			LOOP loop_er 
+ 000004FE  BF 00000000			mov	edi, 0
+					ret 
+ 00000507			Set_ADDR_Word ENDP 
+				;//----------------------------------------------------------------------------------------------
+				;// Name:    Word_In_Line
+				;//
+				;// Purpose: Copies the the word held in the LineBuffer to a string value passed into the procedure
+				;//
+				;// Recives: esi edi, the Line Buffer and the variable to store string in 
+				;//----------------------------------------------------------------------------------------------
+ 00000507			Word_In_Line PROC USES eax ecx esi edi,
+					lineBuff: PTR BYTE, 
+					stringVar:PTR BYTE 		
+					
+					;// Get the word held in line buffer and copy it to stringVar
+ 0000050E  8B 75 08			mov	esi, lineBuff						;// ESI => LineBuffer (contains current line)
+ 00000511  8B 7D 0C			mov	edi, stringVar 					;// EDI => currentWOrd 
+					INVOKE Str_length, lineBuff				;// Invoke Str_Length to know how long lineBuff is 
+ 0000051C  8B C8			mov	ecx,	eax 							;// Save eax to ecx to set count 	
+ 0000051E  83 E9 02			sub	ecx, 2							;// - 2 for '\r' and '\n'
+
+					;// Copy
+ 00000521			LTW_Start:
+ 00000521  8A 06			mov	al, [esi]
+ 00000523  88 07			mov	[edi], al 
+ 00000525  46				inc	esi 
+ 00000526  47				inc	edi 
+ 00000527  E2 F8			LOOP LTW_Start 
+
+					;// At this point edi needs to be null terminated 
+ 00000529  B0 00			mov	al, 0
+ 0000052B  88 07			mov	[edi], al 
+					;// Return to program call 
+					ret  
+ 00000535			Word_In_Line ENDP 
+				;//--------------------------------------------END PROCEDURES------------------------------------
+				END main
+Microsoft (R) Macro Assembler Version 14.00.23026.0	    11/23/15 13:13:20
+emordnilap.asm						     Symbols 2 - 1
+
+
+
+
+Macros:
+
+                N a m e                 Type
+
+IsDefined  . . . . . . . . . . .	Func
+Startup  . . . . . . . . . . . .	Proc
+mDumpMem . . . . . . . . . . . .	Proc
+mDump  . . . . . . . . . . . . .	Proc
+mGotoxy  . . . . . . . . . . . .	Proc
+mReadString  . . . . . . . . . .	Proc
+mShowRegister  . . . . . . . . .	Proc
+mShow  . . . . . . . . . . . . .	Proc
+mWriteLn . . . . . . . . . . . .	Proc
+mWriteSpace  . . . . . . . . . .	Proc
+mWriteString . . . . . . . . . .	Proc
+mWrite . . . . . . . . . . . . .	Proc
+
+
+Structures and Unions:
+
+                N a m e                  Size
+                                         Offset      Type
+
+CONSOLE_CURSOR_INFO  . . . . . .	 00000008
+  dwSize . . . . . . . . . . . .	 00000000	 DWord
+  bVisible . . . . . . . . . . .	 00000004	 DWord
+CONSOLE_SCREEN_BUFFER_INFO . . .	 00000016
+  dwSize . . . . . . . . . . . .	 00000000	 DWord
+  dwCursorPosition . . . . . . .	 00000004	 DWord
+  wAttributes  . . . . . . . . .	 00000008	 Word
+  srWindow . . . . . . . . . . .	 0000000A	 QWord
+  dwMaximumWindowSize  . . . . .	 00000012	 DWord
+COORD  . . . . . . . . . . . . .	 00000004
+  X  . . . . . . . . . . . . . .	 00000000	 Word
+  Y  . . . . . . . . . . . . . .	 00000002	 Word
+FILETIME . . . . . . . . . . . .	 00000008
+  loDateTime . . . . . . . . . .	 00000000	 DWord
+  hiDateTime . . . . . . . . . .	 00000004	 DWord
+FOCUS_EVENT_RECORD . . . . . . .	 00000004
+  bSetFocus  . . . . . . . . . .	 00000000	 DWord
+FPU_ENVIRON  . . . . . . . . . .	 0000001C
+  controlWord  . . . . . . . . .	 00000000	 Word
+  statusWord . . . . . . . . . .	 00000004	 Word
+  tagWord  . . . . . . . . . . .	 00000008	 Word
+  instrPointerOffset . . . . . .	 0000000C	 DWord
+  instrPointerSelector . . . . .	 00000010	 DWord
+  operandPointerOffset . . . . .	 00000014	 DWord
+  operandPointerSelector . . . .	 00000018	 Word
+INPUT_RECORD . . . . . . . . . .	 00000014
+  EventType  . . . . . . . . . .	 00000000	 Word
+  Event  . . . . . . . . . . . .	 00000004	 XmmWord
+  bKeyDown . . . . . . . . . . .	 00000000	 DWord
+  wRepeatCount . . . . . . . . .	 00000004	 Word
+  wVirtualKeyCode  . . . . . . .	 00000006	 Word
+  wVirtualScanCode . . . . . . .	 00000008	 Word
+  uChar  . . . . . . . . . . . .	 0000000A	 Word
+  UnicodeChar  . . . . . . . . .	 00000000	 Word
+  AsciiChar  . . . . . . . . . .	 00000000	 Byte
+  dwControlKeyState  . . . . . .	 0000000C	 DWord
+  dwMousePosition  . . . . . . .	 00000000	 DWord
+  dwButtonState  . . . . . . . .	 00000004	 DWord
+  dwMouseControlKeyState . . . .	 00000008	 DWord
+  dwEventFlags . . . . . . . . .	 0000000C	 DWord
+  dwSize . . . . . . . . . . . .	 00000000	 DWord
+  dwCommandId  . . . . . . . . .	 00000000	 DWord
+  bSetFocus  . . . . . . . . . .	 00000000	 DWord
+KEY_EVENT_RECORD . . . . . . . .	 00000010
+  bKeyDown . . . . . . . . . . .	 00000000	 DWord
+  wRepeatCount . . . . . . . . .	 00000004	 Word
+  wVirtualKeyCode  . . . . . . .	 00000006	 Word
+  wVirtualScanCode . . . . . . .	 00000008	 Word
+  uChar  . . . . . . . . . . . .	 0000000A	 Word
+  UnicodeChar  . . . . . . . . .	 00000000	 Word
+  AsciiChar  . . . . . . . . . .	 00000000	 Byte
+  dwControlKeyState  . . . . . .	 0000000C	 DWord
+MENU_EVENT_RECORD  . . . . . . .	 00000004
+  dwCommandId  . . . . . . . . .	 00000000	 DWord
+MOUSE_EVENT_RECORD . . . . . . .	 00000010
+  dwMousePosition  . . . . . . .	 00000000	 DWord
+  dwButtonState  . . . . . . . .	 00000004	 DWord
+  dwMouseControlKeyState . . . .	 00000008	 DWord
+  dwEventFlags . . . . . . . . .	 0000000C	 DWord
+SMALL_RECT . . . . . . . . . . .	 00000008
+  Left . . . . . . . . . . . . .	 00000000	 Word
+  Top  . . . . . . . . . . . . .	 00000002	 Word
+  Right  . . . . . . . . . . . .	 00000004	 Word
+  Bottom . . . . . . . . . . . .	 00000006	 Word
+SYSTEMTIME . . . . . . . . . . .	 00000010
+  wYear  . . . . . . . . . . . .	 00000000	 Word
+  wMonth . . . . . . . . . . . .	 00000002	 Word
+  wDayOfWeek . . . . . . . . . .	 00000004	 Word
+  wDay . . . . . . . . . . . . .	 00000006	 Word
+  wHour  . . . . . . . . . . . .	 00000008	 Word
+  wMinute  . . . . . . . . . . .	 0000000A	 Word
+  wSecond  . . . . . . . . . . .	 0000000C	 Word
+  wMilliseconds  . . . . . . . .	 0000000E	 Word
+WINDOW_BUFFER_SIZE_RECORD  . . .	 00000004
+  dwSize . . . . . . . . . . . .	 00000000	 DWord
+
+
+Segments and Groups:
+
+                N a m e                 Size     Length   Align   Combine Class
+
+FLAT . . . . . . . . . . . . . .	GROUP
+STACK  . . . . . . . . . . . . .	32 Bit	 00001000 Para	  Stack	  'STACK'	 
+_DATA  . . . . . . . . . . . . .	32 Bit	 0036F13A Para	  Public  'DATA'	
+_TEXT  . . . . . . . . . . . . .	32 Bit	 00000535 Para	  Public  'CODE'	
+
+
+Procedures, parameters, and locals:
+
+                N a m e                 Type     Value    Attr
+
+Amount_of_Words  . . . . . . . .	P Near	 00000354 _TEXT	Length= 0000003F Public STDCALL
+  SearchFileBuffer . . . . . . .	DWord	 bp + 00000008
+  Start_one  . . . . . . . . . .	L Near	 00000367 _TEXT	
+  Is_CR  . . . . . . . . . . . .	L Near	 00000373 _TEXT	
+  Is_LF  . . . . . . . . . . . .	L Near	 0000037C _TEXT	
+  Is_Char  . . . . . . . . . . .	L Near	 00000382 _TEXT	
+  Is_Null  . . . . . . . . . . .	L Near	 00000385 _TEXT	
+CloseFile  . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+CloseHandle  . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+Clrscr . . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+Copy_Word_DogAlpha_Six . . . . .	P Near	 000003BE _TEXT	Length= 0000002B Public STDCALL
+  WordToCopy2  . . . . . . . . .	DWord	 bp + 00000008
+  SaveWordIn2  . . . . . . . . .	DWord	 bp + 0000000C
+Copy_Word_DogAlpha . . . . . . .	P Near	 00000393 _TEXT	Length= 0000002B Public STDCALL
+  WordToCopy . . . . . . . . . .	DWord	 bp + 00000008
+  SaveWordIn . . . . . . . . . .	DWord	 bp + 0000000C
+CreateFileA  . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+CreateOutputFile . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+Crlf . . . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+Delay  . . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+DumpMem  . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+DumpRegs . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+ExitProcess  . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+FileTimeToDosDateTime  . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+FileTimeToSystemTime . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+FlushConsoleInputBuffer  . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+FormatMessageA . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetCommandLineA  . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetCommandTail . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetConsoleCP . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetConsoleCursorInfo . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetConsoleMode . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetConsoleScreenBufferInfo . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetDateTime  . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetFileTime  . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetKeyState  . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetLastError . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetLocalTime . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetMaxXY . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetMseconds  . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetNumberOfConsoleInputEvents  .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetProcessHeap . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetStdHandle . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetSystemTime  . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetTextColor . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+GetTickCount . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+Get_Last_Word_ADDR . . . . . . .	P Near	 000003E9 _TEXT	Length= 00000024 Public STDCALL
+  EOFBuff  . . . . . . . . . . .	DWord	 bp + 00000008
+  gutter . . . . . . . . . . . .	L Near	 000003F6 _TEXT	
+  ender  . . . . . . . . . . . .	L Near	 00000409 _TEXT	
+Get_Line . . . . . . . . . . . .	P Near	 0000040D _TEXT	Length= 00000040 Public STDCALL
+  fileBuff . . . . . . . . . . .	DWord	 bp + 00000008
+  lineBuff . . . . . . . . . . .	DWord	 bp + 0000000C
+  Get_Line_Start . . . . . . . .	L Near	 00000420 _TEXT	
+  Check_CR . . . . . . . . . . .	L Near	 00000426 _TEXT	
+  Copy_Element . . . . . . . . .	L Near	 0000042E _TEXT	
+  Is_New_Line  . . . . . . . . .	L Near	 00000434 _TEXT	
+  Is_NULL  . . . . . . . . . . .	L Near	 0000043E _TEXT	
+  here_1 . . . . . . . . . . . .	L Near	 00000444 _TEXT	
+Gotoxy . . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+HeapAlloc  . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+HeapCreate . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+HeapDestroy  . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+HeapFree . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+HeapSize . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+IsDigit  . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+LocalFree  . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+MessageBoxA  . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+MsgBoxAsk  . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+MsgBox . . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+OpenInputFile  . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+ParseDecimal32 . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+ParseInteger32 . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+PeekConsoleInputA  . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+Random32 . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+RandomRange  . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+Randomize  . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+ReadChar . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+ReadConsoleA . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+ReadConsoleInputA  . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+ReadDec  . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+ReadFile . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+ReadFloat  . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+ReadFromFile . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+ReadHex  . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+ReadInt  . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+ReadKeyFlush . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+ReadKey  . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+ReadString . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+Reverse_Word . . . . . . . . . .	P Near	 0000044D _TEXT	Length= 0000002E Public STDCALL
+  CurWord  . . . . . . . . . . .	DWord	 bp + 00000008
+  RevWord  . . . . . . . . . . .	DWord	 bp + 0000000C
+  Reverse_Loop . . . . . . . . .	L Near	 00000467 _TEXT	
+Search_Buffer  . . . . . . . . .	P Near	 0000047B _TEXT	Length= 0000006F Public STDCALL
+  SearchThis . . . . . . . . . .	DWord	 bp + 00000008
+  SearchFrom . . . . . . . . . .	DWord	 bp + 0000000C
+  SBL1 . . . . . . . . . . . . .	L Near	 0000048D _TEXT	
+  found  . . . . . . . . . . . .	L Near	 000004BA _TEXT	
+  not_found  . . . . . . . . . .	L Near	 000004C8 _TEXT	
+SetConsoleCursorInfo . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+SetConsoleCursorPosition . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+SetConsoleMode . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+SetConsoleScreenBufferSize . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+SetConsoleTextAttribute  . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+SetConsoleTitleA . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+SetConsoleWindowInfo . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+SetFilePointer . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+SetLocalTime . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+SetTextColor . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+Set_ADDR_Word  . . . . . . . . .	P Near	 000004EA _TEXT	Length= 0000001D Public STDCALL
+  begginingADDR  . . . . . . . .	DWord	 bp + 00000008
+  StringVar3 . . . . . . . . . .	DWord	 bp + 0000000C
+  StringVar3Length . . . . . . .	DWord	 bp + 00000010
+  loop_er  . . . . . . . . . . .	L Near	 000004F6 _TEXT	
+ShowFPUStack . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+Sleep  . . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+StrLength  . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+Str_compare  . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+Str_copy . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+Str_length . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+Str_trim . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+Str_ucase  . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+SystemTimeToFileTime . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+WaitMsg  . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+Word_In_Line . . . . . . . . . .	P Near	 00000507 _TEXT	Length= 0000002E Public STDCALL
+  lineBuff . . . . . . . . . . .	DWord	 bp + 00000008
+  stringVar  . . . . . . . . . .	DWord	 bp + 0000000C
+  LTW_Start  . . . . . . . . . .	L Near	 00000521 _TEXT	
+WriteBinB  . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+WriteBin . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+WriteChar  . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+WriteConsoleA  . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+WriteConsoleOutputAttribute  . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+WriteConsoleOutputCharacterA . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+WriteDec . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+WriteFile  . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+WriteFloat . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+WriteHexB  . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+WriteHex . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+WriteInt . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+WriteStackFrameName  . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+WriteStackFrame  . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+WriteString  . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+WriteToFile  . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+WriteWindowsMsg  . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External STDCALL
+main . . . . . . . . . . . . . .	P Near	 00000000 _TEXT	Length= 00000354 Public STDCALL
+  Open_OK  . . . . . . . . . . .	L Near	 00000044 _TEXT	
+  Check_Buff_Size  . . . . . . .	L Near	 00000070 _TEXT	
+  Buff_Size_OK . . . . . . . . .	L Near	 00000088 _TEXT	
+  Outer_Loop_1 . . . . . . . . .	L Near	 000000E4 _TEXT	
+  EqualLess_Eight  . . . . . . .	L Near	 0000011D _TEXT	
+  Above_Eight  . . . . . . . . .	L Near	 00000154 _TEXT	
+  pause_it . . . . . . . . . . .	L Near	 00000170 _TEXT	
+  Emordnilap_Loop  . . . . . . .	L Near	 000001A7 _TEXT	
+  Create_OK  . . . . . . . . . .	L Near	 00000292 _TEXT	
+  starter  . . . . . . . . . . .	L Near	 000002BA _TEXT	
+  count_six  . . . . . . . . . .	L Near	 000002C7 _TEXT	
+  Add_CRLF . . . . . . . . . . .	L Near	 000002D6 _TEXT	
+  end_buff . . . . . . . . . . .	L Near	 000002ED _TEXT	
+  Quit . . . . . . . . . . . . .	L Near	 0000033C _TEXT	
+printf . . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External C
+scanf  . . . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External C
+wsprintfA  . . . . . . . . . . .	P Near	 00000000 FLAT	Length= 00000000 External C
+
+
+Symbols:
+
+                N a m e                 Type     Value    Attr
+
+??0000 . . . . . . . . . . . . .	Byte	 0036F089 _DATA	
+??0001 . . . . . . . . . . . . .	Byte	 0036F09B _DATA	
+??0002 . . . . . . . . . . . . .	Byte	 0036F0B3 _DATA	
+??0003 . . . . . . . . . . . . .	Byte	 0036F0C9 _DATA	
+??0004 . . . . . . . . . . . . .	Byte	 0036F0F2 _DATA	
+??0005 . . . . . . . . . . . . .	Byte	 0036F0FE _DATA	
+??0006 . . . . . . . . . . . . .	Byte	 0036F117 _DATA	
+??0007 . . . . . . . . . . . . .	Byte	 0036F12F _DATA	
+@CodeSize  . . . . . . . . . . .	Number	 00000000h   
+@DataSize  . . . . . . . . . . .	Number	 00000000h   
+@Interface . . . . . . . . . . .	Number	 00000003h   
+@Model . . . . . . . . . . . . .	Number	 00000007h   
+@code  . . . . . . . . . . . . .	Text   	 _TEXT
+@data  . . . . . . . . . . . . .	Text   	 FLAT
+@fardata?  . . . . . . . . . . .	Text   	 FLAT
+@fardata . . . . . . . . . . . .	Text   	 FLAT
+@stack . . . . . . . . . . . . .	Text   	 FLAT
+ALT_MASK . . . . . . . . . . . .	Number	 00000003h   
+BytesWritten . . . . . . . . . .	DWord	 0036F011 _DATA	
+CAPSLOCK_ON  . . . . . . . . . .	Number	 00000080h   
+CREATE_ALWAYS  . . . . . . . . .	Number	 00000002h   
+CREATE_NEW . . . . . . . . . . .	Number	 00000001h   
+CTRL_MASK  . . . . . . . . . . .	Number	 0000000Ch   
+CharCount  . . . . . . . . . . .	DWord	 0036F005 _DATA	
+CreateFile . . . . . . . . . . .	Text   	 CreateFileA
+CurrentEDILocation . . . . . . .	DWord	 0036F025 _DATA	
+CurrentESILocation . . . . . . .	DWord	 0036F021 _DATA	
+CurrentWordRev . . . . . . . . .	Byte	 0036EF37 _DATA	
+CurrentWord  . . . . . . . . . .	Byte	 0036EF0C _DATA	
+DO_NOT_SHARE . . . . . . . . . .	Number	 00000000h   
+ENABLE_ECHO_INPUT  . . . . . . .	Number	 00000004h   
+ENABLE_LINE_INPUT  . . . . . . .	Number	 00000002h   
+ENABLE_MOUSE_INPUT . . . . . . .	Number	 00000010h   
+ENABLE_PROCESSED_INPUT . . . . .	Number	 00000001h   
+ENABLE_PROCESSED_OUTPUT  . . . .	Number	 00000001h   
+ENABLE_WINDOW_INPUT  . . . . . .	Number	 00000008h   
+ENABLE_WRAP_AT_EOL_OUTPUT  . . .	Number	 00000002h   
+ENHANCED_KEY . . . . . . . . . .	Number	 00000100h   
+EndOfFile  . . . . . . . . . . .	DWord	 0036F015 _DATA	
+FALSE  . . . . . . . . . . . . .	Number	 00000000h   
+FILE_APPEND_DATA . . . . . . . .	Number	 00000004h   
+FILE_ATTRIBUTE_ARCHIVE . . . . .	Number	 00000020h   
+FILE_ATTRIBUTE_COMPRESSED  . . .	Number	 00000800h   
+FILE_ATTRIBUTE_DEVICE  . . . . .	Number	 00000040h   
+FILE_ATTRIBUTE_DIRECTORY . . . .	Number	 00000010h   
+FILE_ATTRIBUTE_ENCRYPTED . . . .	Number	 00004000h   
+FILE_ATTRIBUTE_HIDDEN  . . . . .	Number	 00000002h   
+FILE_ATTRIBUTE_NORMAL  . . . . .	Number	 00000080h   
+FILE_ATTRIBUTE_NOT_CONTENT_INDEXED .	Number	 00002000h   
+FILE_ATTRIBUTE_OFFLINE . . . . .	Number	 00001000h   
+FILE_ATTRIBUTE_READONLY  . . . .	Number	 00000001h   
+FILE_ATTRIBUTE_REPARSE_POINT . .	Number	 00000400h   
+FILE_ATTRIBUTE_SPARSE_FILE . . .	Number	 00000200h   
+FILE_ATTRIBUTE_SYSTEM  . . . . .	Number	 00000004h   
+FILE_ATTRIBUTE_TEMPORARY . . . .	Number	 00000100h   
+FILE_BEGIN . . . . . . . . . . .	Number	 00000000h   
+FILE_BUFFER_SIZE . . . . . . . .	Number	 00124F80h   
+FILE_CURRENT . . . . . . . . . .	Number	 00000001h   
+FILE_DELETE_CHILD  . . . . . . .	Number	 00000040h   
+FILE_END . . . . . . . . . . . .	Number	 00000002h   
+FILE_READ_DATA . . . . . . . . .	Number	 00000001h   
+FILE_SHARE_DELETE  . . . . . . .	Number	 00000004h   
+FILE_SHARE_READ  . . . . . . . .	Number	 00000001h   
+FILE_SHARE_WRITE . . . . . . . .	Number	 00000002h   
+FILE_WRITE_DATA  . . . . . . . .	Number	 00000002h   
+FOCUS_EVENT  . . . . . . . . . .	Number	 00000010h   
+FORMAT_MESSAGE_ALLOCATE_BUFFER .	Number	 00000100h   
+FORMAT_MESSAGE_FROM_SYSTEM . . .	Number	 00001000h   
+FileBuffer . . . . . . . . . . .	Byte	 00000000 _DATA	
+FileHandle . . . . . . . . . . .	DWord	 0036EF08 _DATA	
+FileName . . . . . . . . . . . .	Byte	 0036EEB8 _DATA	
+FormatMessage  . . . . . . . . .	Text   	 FormatMessageA
+GENERIC_ALL  . . . . . . . . . .	Number	 10000000h   
+GENERIC_EXECUTE  . . . . . . . .	Number	 20000000h   
+GENERIC_READ . . . . . . . . . .	Number	 -80000000h   
+GENERIC_WRITE  . . . . . . . . .	Number	 40000000h   
+GetCommandLine . . . . . . . . .	Text   	 GetCommandLineA
+HANDLE . . . . . . . . . . . . .	Text   	 DWORD
+HEAP_GENERATE_EXCEPTIONS . . . .	Number	 00000004h   
+HEAP_GROWABLE  . . . . . . . . .	Number	 00000002h   
+HEAP_NO_SERIALIZE  . . . . . . .	Number	 00000001h   
+HEAP_REALLOC_IN_PLACE_ONLY . . .	Number	 00000010h   
+HEAP_ZERO_MEMORY . . . . . . . .	Number	 00000008h   
+IDABORT  . . . . . . . . . . . .	Number	 00000003h   
+IDCANCEL . . . . . . . . . . . .	Number	 00000002h   
+IDCLOSE  . . . . . . . . . . . .	Number	 00000008h   
+IDCONTINUE . . . . . . . . . . .	Number	 0000000Bh   
+IDHELP . . . . . . . . . . . . .	Number	 00000009h   
+IDIGNORE . . . . . . . . . . . .	Number	 00000005h   
+IDNO . . . . . . . . . . . . . .	Number	 00000007h   
+IDOK . . . . . . . . . . . . . .	Number	 00000001h   
+IDRETRY  . . . . . . . . . . . .	Number	 00000004h   
+IDTIMEOUT  . . . . . . . . . . .	Number	 00007D00h   
+IDTRYAGAIN . . . . . . . . . . .	Number	 0000000Ah   
+IDYES  . . . . . . . . . . . . .	Number	 00000006h   
+INVALID_HANDLE_VALUE . . . . . .	Number	 -00000001h   
+KBDOWN_FLAG  . . . . . . . . . .	Number	 00000001h   
+KEY_EVENT  . . . . . . . . . . .	Number	 00000001h   
+KEY_MASKS  . . . . . . . . . . .	Number	 0000001Fh   
+LEFT_ALT_PRESSED . . . . . . . .	Number	 00000002h   
+LEFT_CTRL_PRESSED  . . . . . . .	Number	 00000008h   
+LONGEST_EMORDLAP . . . . . . . .	Number	 00000008h   
+LONGEST_ENG_WORD . . . . . . . .	Number	 0000002Dh   
+LastWordAddress  . . . . . . . .	DWord	 0036F01D _DATA	
+LineBuffer . . . . . . . . . . .	Byte	 00124F80 _DATA	
+MB_ABORTRETRYIGNORE  . . . . . .	Number	 00000002h   
+MB_APPLMODAL . . . . . . . . . .	Number	 00000000h   
+MB_CANCELTRYCONTINUE . . . . . .	Number	 00000006h   
+MB_DEFBUTTON1  . . . . . . . . .	Number	 00000000h   
+MB_DEFBUTTON2  . . . . . . . . .	Number	 00000100h   
+MB_DEFBUTTON3  . . . . . . . . .	Number	 00000200h   
+MB_DEFBUTTON4  . . . . . . . . .	Number	 00000300h   
+MB_HELP  . . . . . . . . . . . .	Number	 00004000h   
+MB_ICONASTERISK  . . . . . . . .	Number	 00000040h   
+MB_ICONERROR . . . . . . . . . .	Number	 00000010h   
+MB_ICONEXCLAMATION . . . . . . .	Number	 00000030h   
+MB_ICONHAND  . . . . . . . . . .	Number	 00000010h   
+MB_ICONINFORMATION . . . . . . .	Number	 00000040h   
+MB_ICONQUESTION  . . . . . . . .	Number	 00000020h   
+MB_ICONSTOP  . . . . . . . . . .	Number	 00000010h   
+MB_ICONWARNING . . . . . . . . .	Number	 00000030h   
+MB_OKCANCEL  . . . . . . . . . .	Number	 00000001h   
+MB_OK  . . . . . . . . . . . . .	Number	 00000000h   
+MB_RETRYCANCEL . . . . . . . . .	Number	 00000005h   
+MB_SYSTEMMODAL . . . . . . . . .	Number	 00001000h   
+MB_TASKMODAL . . . . . . . . . .	Number	 00002000h   
+MB_USERICON  . . . . . . . . . .	Number	 00000080h   
+MB_YESNOCANCEL . . . . . . . . .	Number	 00000003h   
+MB_YESNO . . . . . . . . . . . .	Number	 00000004h   
+MENU_EVENT . . . . . . . . . . .	Number	 00000008h   
+MOUSE_EVENT  . . . . . . . . . .	Number	 00000002h   
+MessageBox . . . . . . . . . . .	Text   	 MessageBoxA
+NULL . . . . . . . . . . . . . .	Number	 00000000h   
+NUMLOCK_ON . . . . . . . . . . .	Number	 00000020h   
+OPEN_ALWAYS  . . . . . . . . . .	Number	 00000004h   
+OPEN_EXISTING  . . . . . . . . .	Number	 00000003h   
+PeekConsoleInput . . . . . . . .	Text   	 PeekConsoleInputA
+RIGHT_ALT_PRESSED  . . . . . . .	Number	 00000001h   
+RIGHT_CTRL_PRESSED . . . . . . .	Number	 00000004h   
+ReadConsoleInput . . . . . . . .	Text   	 ReadConsoleInputA
+ReadConsole  . . . . . . . . . .	Text   	 ReadConsoleA
+ReducedBuff  . . . . . . . . . .	Byte	 00124FAD _DATA	
+ReportBuffer . . . . . . . . . .	Byte	 00249F2D _DATA	
+ReportFile . . . . . . . . . . .	Byte	 0036EEAD _DATA	
+ReportHeader . . . . . . . . . .	Byte	 0036EF62 _DATA	
+ReturnCode . . . . . . . . . . .	DWord	 0036F00D _DATA	
+SCROLLLOCK_ON  . . . . . . . . .	Number	 00000040h   
+SHIFT_MASK . . . . . . . . . . .	Number	 00000010h   
+SHIFT_PRESSED  . . . . . . . . .	Number	 00000010h   
+STD_ERROR_HANDLE . . . . . . . .	Number	 -0000000Ch   
+STD_INPUT_HANDLE . . . . . . . .	Number	 -0000000Ah   
+STD_OUTPUT_HANDLE  . . . . . . .	Number	 -0000000Bh   
+SetConsoleTitle  . . . . . . . .	Text   	 SetConsoleTitleA
+StartOfFile  . . . . . . . . . .	DWord	 0036F019 _DATA	
+TAB  . . . . . . . . . . . . . .	Number	 00000009h   
+TRUE . . . . . . . . . . . . . .	Number	 00000001h   
+TRUNCATE_EXISTING  . . . . . . .	Number	 00000005h   
+TempLine . . . . . . . . . . . .	Byte	 0036F02D _DATA	
+TempWord . . . . . . . . . . . .	Byte	 0036F05C _DATA	
+VK_11  . . . . . . . . . . . . .	Number	 000000BDh   
+VK_12  . . . . . . . . . . . . .	Number	 000000BBh   
+VK_ADD . . . . . . . . . . . . .	Number	 0000006Bh   
+VK_BACK  . . . . . . . . . . . .	Number	 00000008h   
+VK_CANCEL  . . . . . . . . . . .	Number	 00000003h   
+VK_CAPITAL . . . . . . . . . . .	Number	 00000014h   
+VK_CLEAR . . . . . . . . . . . .	Number	 0000000Ch   
+VK_CONTROL . . . . . . . . . . .	Number	 00000011h   
+VK_DECIMAL . . . . . . . . . . .	Number	 0000006Eh   
+VK_DELETE  . . . . . . . . . . .	Number	 0000002Eh   
+VK_DIVIDE  . . . . . . . . . . .	Number	 0000006Fh   
+VK_DOWN  . . . . . . . . . . . .	Number	 00000028h   
+VK_END . . . . . . . . . . . . .	Number	 00000023h   
+VK_ESCAPE  . . . . . . . . . . .	Number	 0000001Bh   
+VK_EXECUTE . . . . . . . . . . .	Number	 0000002Bh   
+VK_F10 . . . . . . . . . . . . .	Number	 00000079h   
+VK_F11 . . . . . . . . . . . . .	Number	 0000007Ah   
+VK_F12 . . . . . . . . . . . . .	Number	 0000007Bh   
+VK_F13 . . . . . . . . . . . . .	Number	 0000007Ch   
+VK_F14 . . . . . . . . . . . . .	Number	 0000007Dh   
+VK_F15 . . . . . . . . . . . . .	Number	 0000007Eh   
+VK_F16 . . . . . . . . . . . . .	Number	 0000007Fh   
+VK_F17 . . . . . . . . . . . . .	Number	 00000080h   
+VK_F18 . . . . . . . . . . . . .	Number	 00000081h   
+VK_F19 . . . . . . . . . . . . .	Number	 00000082h   
+VK_F1  . . . . . . . . . . . . .	Number	 00000070h   
+VK_F20 . . . . . . . . . . . . .	Number	 00000083h   
+VK_F21 . . . . . . . . . . . . .	Number	 00000084h   
+VK_F22 . . . . . . . . . . . . .	Number	 00000085h   
+VK_F23 . . . . . . . . . . . . .	Number	 00000086h   
+VK_F24 . . . . . . . . . . . . .	Number	 00000087h   
+VK_F2  . . . . . . . . . . . . .	Number	 00000071h   
+VK_F3  . . . . . . . . . . . . .	Number	 00000072h   
+VK_F4  . . . . . . . . . . . . .	Number	 00000073h   
+VK_F5  . . . . . . . . . . . . .	Number	 00000074h   
+VK_F6  . . . . . . . . . . . . .	Number	 00000075h   
+VK_F7  . . . . . . . . . . . . .	Number	 00000076h   
+VK_F8  . . . . . . . . . . . . .	Number	 00000077h   
+VK_F9  . . . . . . . . . . . . .	Number	 00000078h   
+VK_HELP  . . . . . . . . . . . .	Number	 0000002Fh   
+VK_HOME  . . . . . . . . . . . .	Number	 00000024h   
+VK_INSERT  . . . . . . . . . . .	Number	 0000002Dh   
+VK_LBUTTON . . . . . . . . . . .	Number	 00000001h   
+VK_LCONTROL  . . . . . . . . . .	Number	 000000A2h   
+VK_LEFT  . . . . . . . . . . . .	Number	 00000025h   
+VK_LMENU . . . . . . . . . . . .	Number	 000000A4h   
+VK_LSHIFT  . . . . . . . . . . .	Number	 000000A0h   
+VK_MENU  . . . . . . . . . . . .	Number	 00000012h   
+VK_MULTIPLY  . . . . . . . . . .	Number	 0000006Ah   
+VK_NEXT  . . . . . . . . . . . .	Number	 00000022h   
+VK_NUMLOCK . . . . . . . . . . .	Number	 00000090h   
+VK_NUMPAD0 . . . . . . . . . . .	Number	 00000060h   
+VK_NUMPAD1 . . . . . . . . . . .	Number	 00000061h   
+VK_NUMPAD2 . . . . . . . . . . .	Number	 00000062h   
+VK_NUMPAD3 . . . . . . . . . . .	Number	 00000063h   
+VK_NUMPAD4 . . . . . . . . . . .	Number	 00000064h   
+VK_NUMPAD5 . . . . . . . . . . .	Number	 00000065h   
+VK_NUMPAD6 . . . . . . . . . . .	Number	 00000066h   
+VK_NUMPAD7 . . . . . . . . . . .	Number	 00000067h   
+VK_NUMPAD8 . . . . . . . . . . .	Number	 00000068h   
+VK_NUMPAD9 . . . . . . . . . . .	Number	 00000069h   
+VK_PAUSE . . . . . . . . . . . .	Number	 00000013h   
+VK_PRINT . . . . . . . . . . . .	Number	 0000002Ah   
+VK_PRIOR . . . . . . . . . . . .	Number	 00000021h   
+VK_RBUTTON . . . . . . . . . . .	Number	 00000002h   
+VK_RCONTROL  . . . . . . . . . .	Number	 000000A3h   
+VK_RETURN  . . . . . . . . . . .	Number	 0000000Dh   
+VK_RIGHT . . . . . . . . . . . .	Number	 00000027h   
+VK_RMENU . . . . . . . . . . . .	Number	 000000A5h   
+VK_RSHIFT  . . . . . . . . . . .	Number	 000000A1h   
+VK_SCROLL  . . . . . . . . . . .	Number	 00000091h   
+VK_SEPARATER . . . . . . . . . .	Number	 0000006Ch   
+VK_SHIFT . . . . . . . . . . . .	Number	 00000010h   
+VK_SNAPSHOT  . . . . . . . . . .	Number	 0000002Ch   
+VK_SPACE . . . . . . . . . . . .	Number	 00000020h   
+VK_SUBTRACT  . . . . . . . . . .	Number	 0000006Dh   
+VK_TAB . . . . . . . . . . . . .	Number	 00000009h   
+VK_UP  . . . . . . . . . . . . .	Number	 00000026h   
+WINDOW_BUFFER_SIZE_EVENT . . . .	Number	 00000004h   
+WordCount  . . . . . . . . . . .	DWord	 0036F009 _DATA	
+WriteConsoleOutputCharacter  . .	Text   	 WriteConsoleOutputCharacterA
+WriteConsole . . . . . . . . . .	Text   	 WriteConsoleA
+black  . . . . . . . . . . . . .	Number	 00000000h   
+blue . . . . . . . . . . . . . .	Number	 00000001h   
+brown  . . . . . . . . . . . . .	Number	 00000006h   
+cyan . . . . . . . . . . . . . .	Number	 00000003h   
+exit . . . . . . . . . . . . . .	Text   	 INVOKE ExitProcess,0
+gray . . . . . . . . . . . . . .	Number	 00000008h   
+green  . . . . . . . . . . . . .	Number	 00000002h   
+lightBlue  . . . . . . . . . . .	Number	 00000009h   
+lightCyan  . . . . . . . . . . .	Number	 0000000Bh   
+lightGray  . . . . . . . . . . .	Number	 00000007h   
+lightGreen . . . . . . . . . . .	Number	 0000000Ah   
+lightMagenta . . . . . . . . . .	Number	 0000000Dh   
+lightRed . . . . . . . . . . . .	Number	 0000000Ch   
+magenta  . . . . . . . . . . . .	Number	 00000005h   
+red  . . . . . . . . . . . . . .	Number	 00000004h   
+saveLoc  . . . . . . . . . . . .	DWord	 0036F029 _DATA	
+white  . . . . . . . . . . . . .	Number	 0000000Fh   
+wsprintf . . . . . . . . . . . .	Text   	 wsprintfA
+yellow . . . . . . . . . . . . .	Number	 0000000Eh   
+
+	   0 Warnings
+	   0 Errors
